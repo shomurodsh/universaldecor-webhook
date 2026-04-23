@@ -10,7 +10,8 @@ function flatToLead(body) {
   const lead = {};
 
   for (const [key, value] of Object.entries(body)) {
-    // Ищем ключи вида leads[action][0][field]
+    // Ищем ключи вида leads[любое_действие][0][поле]
+    // Например: leads[status][0][id], leads[update][0][name]
     const match = key.match(/^leads\[[^\]]+\]\[0\]\[(.+)\]$/);
     if (match) {
       lead[match[1]] = value;

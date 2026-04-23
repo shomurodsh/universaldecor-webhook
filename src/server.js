@@ -40,6 +40,7 @@ fastify.post('/amocrm/receive', async (request, reply) => {
 
   try {
     const { entity, action } = parseEntityAndAction(request.body);
+    console.log('🔍 DEBUG entity:', entity, 'action:', action);
 
     const result = await query(
       `INSERT INTO amo_webhook_raw (entity, action, payload)
