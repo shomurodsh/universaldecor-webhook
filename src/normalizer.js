@@ -111,7 +111,8 @@ export async function normalizeWebhook(rawId, body) {
     );
 
     await query(`UPDATE amo_webhook_raw SET processed = true WHERE id = $1`, [rawId]);
-
+console.log('🔍 DEBUG cf:', JSON.stringify(cf));
+    console.log('🔍 DEBUG lead:', JSON.stringify(lead));
     console.log(`✅ Сделка: id=${lead.id} name="${lead.name}" product="${cf[FIELD_IDS.product_line]}"`);
     return lead.id;
 
