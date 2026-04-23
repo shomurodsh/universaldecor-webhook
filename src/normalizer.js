@@ -1,50 +1,77 @@
 // src/normalizer.js
-// Разбирает сырой payload amoCRM и записывает в таблицу leads.
-// amoCRM шлёт ключи вида "leads[update][0][name]" — парсим их в объект.
-
 import { query } from './db.js';
 
-// Превращает плоский объект с ключами "leads[update][0][name]"
-// в нормальный объект { id, name, status_id, ... }
+// ID кастомных полей из твоего amoCRM
+const FIELD_IDS = {
+  client_type:  '927261',  // Mijoz turi
+  region:       '927257',  // Viloyat
+  source:       '927259',  // Istochnik
+  product_line: '927263',  // Mahsulot turi
+  destination:  '991053',  // Qayerga olmoqchi
+  quantity:     '990775',  // Maxsulot soni / metr
+};
+
+// Парсим плоский payload в объект сделки
 function flatToLead(body) {
   const lead = {};
+  const customFields = {};
 
   for (const [key, value] of Object.entries(body)) {
-    // Ищем ключи вида leads[любое_действие][0][поле]
-    // Например: leads[status][0][id], leads[update][0][name]
-    const match = key.match(/^leads\[[^\]]+\]\[0\]\[(.+)\]$/);
-    if (match) {
-      lead[match[1]] = value;
+    // Основные поля: leads[action][0][field]
+    const mainMatch = key.match(/^leads\[[^\]]+\]\[0\]\[(.+)\]$/);
+    if (mainMatch) {
+      const field = mainMatch[1];
+
+      // Кастомные поля: leads[action][0][custom_fields][N][id/name/values]
+      const cfIdMatch = field.match(/^custom_fields\[(\d+)\]\[id\]$/);
+      const cfValMatch = field.match(/^custom_fields\[(\d+)\]\[values\]\[0\]\[value\]$/);
+
+      if (cfIdMatch) {
+        const idx = cfIdMatch[1];
+        if (!customFields[idx]) customFields[idx] = {};
+        customFields[idx].id = value;
+      } else if (cfValMatch) {
+        const idx = cfValMatch[1];
+        if (!customFields[idx]) customFields[idx] = {};
+        customFields[idx].value = value;
+      } else if (!field.startsWith('custom_fields')) {
+        lead[field] = value;
+      }
     }
   }
 
-  return lead;
+  // Маппим кастомные поля по ID
+  const cf = {};
+  for (const [, field] of Object.entries(customFields)) {
+    if (field.id && field.value !== undefined) {
+      cf[field.id] = field.value;
+    }
+  }
+
+  return { lead, cf };
 }
 
-// Основная функция — нормализует одну запись из amo_webhook_raw
 export async function normalizeWebhook(rawId, body) {
   try {
-    const lead = flatToLead(body);
+    const { lead, cf } = flatToLead(body);
 
-    // Если нет id сделки — это не сделка (например account-событие)
     if (!lead.id) {
-      await query(
-        `UPDATE amo_webhook_raw SET processed = true WHERE id = $1`,
-        [rawId]
-      );
+      await query(`UPDATE amo_webhook_raw SET processed = true WHERE id = $1`, [rawId]);
       return null;
     }
 
-    // UPSERT — если сделка уже есть, обновляем; если нет — вставляем
     await query(
       `INSERT INTO leads (
         amo_id, name, pipeline_id, status_id, price,
         responsible_user_id, created_user_id, modified_user_id,
-        created_at, updated_at, account_id, raw_payload, synced_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,
-        to_timestamp($9::bigint),
-        to_timestamp($10::bigint),
-        $11,$12,NOW())
+        created_at, updated_at, account_id,
+        product_line, source, region, client_type, destination, quantity,
+        raw_payload, synced_at
+      ) VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,
+        to_timestamp($9::bigint), to_timestamp($10::bigint),
+        $11,$12,$13,$14,$15,$16,$17,$18,NOW()
+      )
       ON CONFLICT (amo_id) DO UPDATE SET
         name                = EXCLUDED.name,
         pipeline_id         = EXCLUDED.pipeline_id,
@@ -53,6 +80,12 @@ export async function normalizeWebhook(rawId, body) {
         responsible_user_id = EXCLUDED.responsible_user_id,
         modified_user_id    = EXCLUDED.modified_user_id,
         updated_at          = EXCLUDED.updated_at,
+        product_line        = EXCLUDED.product_line,
+        source              = EXCLUDED.source,
+        region              = EXCLUDED.region,
+        client_type         = EXCLUDED.client_type,
+        destination         = EXCLUDED.destination,
+        quantity            = EXCLUDED.quantity,
         raw_payload         = EXCLUDED.raw_payload,
         synced_at           = NOW()`,
       [
@@ -67,26 +100,24 @@ export async function normalizeWebhook(rawId, body) {
         lead.created_at || null,
         lead.updated_at || null,
         body['account[id]'] || null,
+        cf[FIELD_IDS.product_line] || null,
+        cf[FIELD_IDS.source] || null,
+        cf[FIELD_IDS.region] || null,
+        cf[FIELD_IDS.client_type] || null,
+        cf[FIELD_IDS.destination] || null,
+        cf[FIELD_IDS.quantity] || null,
         JSON.stringify(body)
       ]
     );
 
-    // Помечаем raw запись как обработанную
-    await query(
-      `UPDATE amo_webhook_raw SET processed = true WHERE id = $1`,
-      [rawId]
-    );
+    await query(`UPDATE amo_webhook_raw SET processed = true WHERE id = $1`, [rawId]);
 
-    console.log(`✅ Сделка нормализована: id=${lead.id} name="${lead.name}"`);
+    console.log(`✅ Сделка: id=${lead.id} name="${lead.name}" product="${cf[FIELD_IDS.product_line]}"`);
     return lead.id;
 
   } catch (err) {
-    // Записываем ошибку в raw таблицу
-    await query(
-      `UPDATE amo_webhook_raw SET error = $1 WHERE id = $2`,
-      [err.message, rawId]
-    );
-    console.error(`❌ Ошибка нормализации raw#${rawId}:`, err.message);
+    await query(`UPDATE amo_webhook_raw SET error = $1 WHERE id = $2`, [err.message, rawId]);
+    console.error(`❌ Ошибка raw#${rawId}:`, err.message);
     return null;
   }
 }
