@@ -97,4 +97,88 @@ process.on('SIGINT', async () => {
   process.exit(0);
 });
 
+// Временный endpoint для backfill — запускается один раз
+fastify.get('/admin/backfill', async (request, reply) => {
+  if (request.query.token !== WEBHOOK_SECRET) {
+    return reply.code(401).send({ error: 'Unauthorized' });
+  }
+
+  // Запускаем в фоне
+  runBackfill().catch(console.error);
+  return { status: 'started', message: 'Backfill запущен в фоне' };
+});
+
+async function runBackfill() {
+  const FIELD_IDS = {
+    client_type:  '927261',
+    region:       '927257',
+    source:       '927259',
+    product_line: '927263',
+    destination:  '991053',
+    quantity:     '990775',
+  };
+
+  const token = process.env.AMOCRM_LONG_TOKEN;
+  const domain = process.env.AMOCRM_DOMAIN;
+  let page = 1;
+  let total = 0;
+
+  console.log('🚀 Backfill started...');
+
+  while (true) {
+    const res = await fetch(
+      `https://${domain}.amocrm.ru/api/v4/leads?limit=250&page=${page}`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+
+    if (res.status === 204) break;
+    const data = await res.json();
+    const leads = data?._embedded?.leads;
+    if (!leads || leads.length === 0) break;
+
+    for (const lead of leads) {
+      const cf = {};
+      for (const field of lead.custom_fields_values || []) {
+        cf[String(field.field_id)] = field.values?.[0]?.value || null;
+      }
+
+      await query(
+        `INSERT INTO leads (
+          amo_id, name, pipeline_id, status_id, price,
+          responsible_user_id, created_user_id,
+          created_at, updated_at, account_id,
+          product_line, source, region, client_type, destination, quantity,
+          raw_payload, synced_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,
+          to_timestamp($8), to_timestamp($9),
+          $10,$11,$12,$13,$14,$15,$16,$17,NOW())
+        ON CONFLICT (amo_id) DO UPDATE SET
+          name = EXCLUDED.name, status_id = EXCLUDED.status_id,
+          product_line = EXCLUDED.product_line, source = EXCLUDED.source,
+          region = EXCLUDED.region, synced_at = NOW()`,
+        [
+          lead.id, lead.name, lead.pipeline_id, lead.status_id, lead.price || 0,
+          lead.responsible_user_id, lead.created_by,
+          lead.created_at, lead.updated_at, lead.account_id,
+          cf[FIELD_IDS.product_line] || null,
+          cf[FIELD_IDS.source] || null,
+          cf[FIELD_IDS.region] || null,
+          cf[FIELD_IDS.client_type] || null,
+          cf[FIELD_IDS.destination] || null,
+          cf[FIELD_IDS.quantity] || null,
+          JSON.stringify(lead)
+        ]
+      );
+      total++;
+    }
+
+    console.log(`✅ Backfill page ${page}: total ${total}`);
+    if (leads.length < 250) break;
+    page++;
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  console.log(`🎉 Backfill done: ${total} leads`);
+}
+
 start();
