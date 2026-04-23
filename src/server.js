@@ -10,10 +10,21 @@ const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET_TOKEN || 'change-me-later';
 
 function parseEntityAndAction(body) {
   if (!body || typeof body !== 'object') return { entity: null, action: null };
-  const firstKey = Object.keys(body)[0] || '';
-  const entity = firstKey.split('[')[0] || null;
+
+  // Ищем ключ который начинается с "leads", "contacts", "tasks" и т.д.
+  // НЕ "account" — это метаданные, не сущность
+  const entities = ['leads', 'contacts', 'tasks', 'unsorted', 'customers'];
+  
+  const firstKey = Object.keys(body).find(key => 
+    entities.some(e => key.startsWith(e))
+  ) || '';
+
+  if (!firstKey) return { entity: null, action: null };
+
+  const entity = firstKey.split('[')[0];
   const match = firstKey.match(/\[([^\]]+)\]/);
   const action = match ? match[1] : null;
+
   return { entity, action };
 }
 
