@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import formbody from '@fastify/formbody';
 import { query, pool } from './db.js';
+import { normalizeWebhook } from './normalizer.js';
 
 const fastify = Fastify({ logger: true });
 await fastify.register(formbody);
@@ -47,8 +48,17 @@ fastify.post('/amocrm/receive', async (request, reply) => {
       [entity, action, JSON.stringify(request.body)]
     );
 
-    request.log.info({ id: result.rows[0].id, entity, action }, '✅ Webhook сохранён');
-    return reply.code(200).send({ success: true, id: result.rows[0].id });
+ const rawId = result.rows[0].id;
+    request.log.info({ id: rawId, entity, action }, '✅ Webhook сохранён');
+
+    // Нормализуем асинхронно — не ждём, отвечаем сразу
+    if (entity === 'leads') {
+      normalizeWebhook(rawId, request.body).catch(err =>
+        request.log.error({ err }, '⚠️ Ошибка нормализации')
+      );
+    }
+
+    return reply.code(200).send({ success: true, id: rawId });
 
   } catch (err) {
     request.log.error({ err }, '⚠️ Ошибка БД');
