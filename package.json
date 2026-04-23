@@ -1,0 +1,23 @@
+{
+  "name": "universaldecor-webhook",
+  "version": "1.0.0",
+  "description": "amoCRM webhook integration for Universal Decor dashboard",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "keywords": [
+    "amocrm",
+    "webhook",
+    "dashboard"
+  ],
+  "author": "Shomurod",
+  "license": "MIT",
+  "dependencies": {
+    "@fastify/formbody": "^8.0.2",
+    "fastify": "^5.8.5",
+    "pg": "^8.20.0"
+  }
+}
