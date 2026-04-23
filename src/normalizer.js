@@ -17,37 +17,43 @@ function flatToLead(body) {
   const customFields = {};
 
   for (const [key, value] of Object.entries(body)) {
-    // Основные поля: leads[action][0][field]
-    const mainMatch = key.match(/^leads\[[^\]]+\]\[0\]\[(.+)\]$/);
+    // Пропускаем account поля
+    if (key.startsWith('account[')) continue;
+
+    // Кастомные поля: leads[action][0][custom_fields][N][id]
+    const cfIdMatch = key.match(/\[custom_fields\]\[(\d+)\]\[id\]$/);
+    if (cfIdMatch) {
+      const idx = cfIdMatch[1];
+      if (!customFields[idx]) customFields[idx] = {};
+      customFields[idx].id = value;
+      continue;
+    }
+
+    // Кастомные поля: leads[action][0][custom_fields][N][values][0][value]
+    const cfValMatch = key.match(/\[custom_fields\]\[(\d+)\]\[values\]\[0\]\[value\]$/);
+    if (cfValMatch) {
+      const idx = cfValMatch[1];
+      if (!customFields[idx]) customFields[idx] = {};
+      customFields[idx].value = value;
+      continue;
+    }
+
+    // Основные поля: leads[action][0][fieldname]
+    const mainMatch = key.match(/^leads\[[^\]]+\]\[0\]\[([^\]]+)\]$/);
     if (mainMatch) {
-      const field = mainMatch[1];
-
-      // Кастомные поля: leads[action][0][custom_fields][N][id/name/values]
-      const cfIdMatch = field.match(/^custom_fields\[(\d+)\]\[id\]$/);
-      const cfValMatch = field.match(/^custom_fields\[(\d+)\]\[values\]\[0\]\[value\]$/);
-
-      if (cfIdMatch) {
-        const idx = cfIdMatch[1];
-        if (!customFields[idx]) customFields[idx] = {};
-        customFields[idx].id = value;
-      } else if (cfValMatch) {
-        const idx = cfValMatch[1];
-        if (!customFields[idx]) customFields[idx] = {};
-        customFields[idx].value = value;
-      } else if (!field.startsWith('custom_fields')) {
-        lead[field] = value;
-      }
+      lead[mainMatch[1]] = value;
     }
   }
 
-  // Маппим кастомные поля по ID
+  // Маппим по ID поля
   const cf = {};
-  for (const [, field] of Object.entries(customFields)) {
+  for (const field of Object.values(customFields)) {
     if (field.id && field.value !== undefined) {
       cf[field.id] = field.value;
     }
   }
 
+  console.log('🔍 DEBUG cf:', JSON.stringify(cf));
   return { lead, cf };
 }
 
