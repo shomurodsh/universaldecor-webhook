@@ -43,6 +43,19 @@ fastify.get('/health', async () => {
   }
 });
 
+fastify.get('/api/test-db', async () => {
+  try {
+    const total = await query('SELECT COUNT(*) FROM leads');
+    const sample = await query('SELECT amo_id, name, product_line, source FROM leads LIMIT 5');
+    return {
+      total: total.rows[0].count,
+      sample: sample.rows
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
 fastify.post('/amocrm/receive', async (request, reply) => {
   if (request.query.token !== WEBHOOK_SECRET) {
     request.log.warn({ ip: request.ip }, '❌ Неверный токен');
